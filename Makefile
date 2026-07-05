@@ -14,7 +14,7 @@ OPENSBI_DIR  = $(CURDIR)/opensbi
 
 STUB_DIR     = $(CURDIR)/stub
 TRIGGER_DIR  = $(CURDIR)/trigger
-ROOTFS_DIR   = $(CURDIR)/rootfs
+ROOTFS_OVERLAY = $(CURDIR)/rootfs-overlay
 SCRIPTS_DIR  = $(CURDIR)/scripts
 
 LINUX_BUILD  = $(TARGET)/linux
@@ -81,8 +81,8 @@ $(ALPINE_DIR)/.stamp:
 	curl -sL $(ALPINE_URL) | tar -xz -C $(ALPINE_DIR)
 	touch $@
 
-$(INITRD): $(ALPINE_DIR)/.stamp $(TRIGGER_BIN) $(ROOTFS_DIR)/alpine/etc/inittab
-	cp $(ROOTFS_DIR)/alpine/etc/inittab $(ALPINE_DIR)/etc/inittab
+$(INITRD): $(ALPINE_DIR)/.stamp $(TRIGGER_BIN) $(ROOTFS_OVERLAY)/etc/inittab
+	cp $(ROOTFS_OVERLAY)/etc/inittab $(ALPINE_DIR)/etc/inittab
 	cp $(TRIGGER_BIN) $(ALPINE_DIR)/ebreak_trigger
 	cd $(ALPINE_DIR) && find . | cpio -o -H newc 2>/dev/null | gzip -9 > $@
 
