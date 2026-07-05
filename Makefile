@@ -28,7 +28,7 @@ LINUX_IMAGE  = $(LINUX_BUILD)/arch/riscv/boot/Image
 STUB_BIN     = $(TARGET)/restore_stub.bin
 CONVERT_BIN  = $(TARGET)/convert
 TRIGGER_BIN  = $(TARGET)/ebreak_trigger
-INITRD       = $(TARGET)/initramfs.cpio.gz
+INITRD      ?= $(TARGET)/initramfs.cpio.gz
 
 ALPINE_VER  ?= 3.22.0
 ALPINE_V    = $(word 1,$(subst ., ,$(ALPINE_VER))).$(word 2,$(subst ., ,$(ALPINE_VER)))
@@ -81,7 +81,7 @@ $(ALPINE_DIR)/.stamp:
 	curl -sL $(ALPINE_URL) | tar -xz -C $(ALPINE_DIR)
 	touch $@
 
-$(INITRD): $(ALPINE_DIR)/.stamp $(TRIGGER_BIN) $(ROOTFS_OVERLAY)/etc/inittab
+$(TARGET)/initramfs.cpio.gz: $(ALPINE_DIR)/.stamp $(TRIGGER_BIN) $(ROOTFS_OVERLAY)/etc/inittab
 	cp $(ROOTFS_OVERLAY)/etc/inittab $(ALPINE_DIR)/etc/inittab
 	cp $(TRIGGER_BIN) $(ALPINE_DIR)/ebreak_trigger
 	cd $(ALPINE_DIR) && find . | cpio -o -H newc 2>/dev/null | gzip -9 > $@
@@ -93,7 +93,7 @@ build-qemu:      $(QEMU_BIN)
 build-stub:      $(STUB_BIN)
 build-convert:   $(CONVERT_BIN)
 build-trigger:   $(TRIGGER_BIN)
-build-rootfs:    $(INITRD)
+build-rootfs:    $(filter $(TARGET)/initramfs.cpio.gz,$(INITRD))
 
 # ---- Aggregate ----
 build: build-linux build-opensbi build-qemu build-stub build-convert build-trigger build-rootfs
