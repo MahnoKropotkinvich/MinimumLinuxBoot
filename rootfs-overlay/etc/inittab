@@ -1,0 +1,5 @@
+::sysinit:/bin/hostname openpiton
+::sysinit:/bin/mount -t proc proc /proc
+::sysinit:/bin/mount -t sysfs sysfs /sys
+::once:/ebreak_trigger
+hvc0::respawn:-/bin/sh
