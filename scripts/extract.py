@@ -94,8 +94,8 @@ def parse_args() -> argparse.Namespace:
     # Runtime
     p.add_argument("-o", "--output-dir", default="build",
                    help="Output directory (default: build/)")
-    p.add_argument("--gdb-port", type=int, default=1234,
-                   help="GDB TCP port (default: 1234)")
+    p.add_argument("--gdb-socket", default="build/gdb.sock",
+                   help="GDB Unix domain socket path (default: build/gdb.sock)")
     p.add_argument("--qemu-wait", type=float, default=2.0,
                    help="Seconds to wait for QEMU startup")
     p.add_argument("--timeout", type=int, default=300,
@@ -125,14 +125,14 @@ def run_qemu() -> subprocess.Popen:
         "-m", "256M", "-nographic",
         "-bios", args.bios,
         "-kernel", args.kernel,
-        "-gdb", f"tcp::{args.gdb_port}",
+        "-gdb", f"unix:{args.gdb_socket},server,nowait",
         "-S",
     ]
     if args.initrd:
         argv += ["-initrd", args.initrd]
     if args.append:
         argv += ["-append", args.append]
-    print(f"Starting QEMU (:{args.gdb_port})...", file=sys.stderr)
+    print(f"Starting QEMU ({args.gdb_socket})...", file=sys.stderr)
     proc = subprocess.Popen(argv,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(args.qemu_wait)
@@ -145,7 +145,7 @@ def run_gdb(bp: int, ram_base: int, ram_size: int, ram_path: Path) -> str:
     """Run GDB batch: breakpoint, read registers, dump RAM."""
     cmds = [
         "set architecture riscv:rv64",
-        f"target remote localhost:{args.gdb_port}",
+        f"target remote {args.gdb_socket}",
         f"break *{bp:#x}",
         "continue",
         *(f"p/x ${r}" for r in ALL_REGS),
@@ -295,6 +295,7 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 qemu.kill()
                 qemu.wait()
+        Path(args.gdb_socket).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
