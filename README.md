@@ -35,9 +35,14 @@ or point at another kernel/initrd
 make PREFIX=/path/to/cross KERNEL=/path/to/Image INITRD=/path/to/rootfs.cpio capture
 ```
 The initramfs **MUST** run `/ebreak_trigger` at the checkpoint (`::once:/ebreak_trigger` in inittab).
-3. The output dir is under `build/`. The converted memory image is `build/mem.image`
+3. The output dir is under `build/`. The converted memory image is `build/mem.image`.
+
+## Github Action
+The action can automatically produce `mem.image` corresponding to the repo setting.
+
 ## Notes
 - OpenPiton itself is not shipped with this repo, you can build it on your own.
 - OpenPiton does not provide an interactive fake UART device either but a read-only one. You can manually modify it into a NS16550-compatible read-write device.
-- We only use bsc-linux's kernel and initramfs. Not its firmware and DTS.
-- The supported maximum smp number is 16, according to upstream qemu restriction.
+- We only use bsc-linux's kernel and initramfs. Not its firmware nor its DTS.
+- The supported maximum smp number is 16, according to upstream qemu restriction and `restore_stub.ld` memory layout.
+

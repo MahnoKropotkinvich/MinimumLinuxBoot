@@ -7,7 +7,7 @@ Usage:
         --kernel bsc-linux/buildroot/output/images/Image \
         --initrd bsc-linux/buildroot/output/images/rootfs.cpio \
         --stub build/restore_stub.bin \
-        --smp 1 --bp 0xffffffff80003cbc \
+        --smp 1 --bp 0xffffffff80003df2 \
         -o build/
 """
 
@@ -37,10 +37,8 @@ MAX_CLINT_HARTS = 16
 QEMU_STARTUP_WAIT = 2.0
 GDB_TIMEOUT = 600
 
-# Linux do_trap_break. The userspace ebreak_trigger runs after init; GDB
-# stops here, before the instruction executes, so restore leaves pc alone
-# and the kernel resumes handling the ebreak.
-DO_TRAP_BREAK = 0xFFFFFFFF80003CBC
+# Fallback only. Prefer --bp from `nm vmlinux` of the kernel being captured.
+DO_TRAP_BREAK = 0xFFFFFFFF80003DF2
 
 
 @dataclass

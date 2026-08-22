@@ -1,0 +1,155 @@
+name: capture
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: capture-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  toolchain:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install RISC-V gcc and gdb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-riscv64-linux-gnu gdb-multiarch
+          riscv64-linux-gnu-gcc --version
+          gdb-multiarch --version | head -1
+
+  qemu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init qemu submodule
+        run: git submodule update --init qemu
+
+      - name: QEMU build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config libglib2.0-dev \
+            libpixman-1-dev flex bison python3-venv meson
+
+      - name: Cache QEMU build
+        uses: actions/cache@v4
+        with:
+          path: build/qemu
+          key: qemu-${{ hashFiles('qemu/VERSION', 'qemu/configure', 'qemu/meson.build') }}
+          restore-keys: qemu-
+
+      - name: Build QEMU
+        run: make -j$(nproc) build-qemu
+
+      - name: Pack QEMU
+        run: |
+          mkdir -p dist/qemu
+          cp build/qemu/qemu-system-riscv64 dist/qemu/
+          cp qemu/pc-bios/opensbi-riscv64-generic-fw_dynamic.bin dist/qemu/bios.bin
+          chmod +x dist/qemu/qemu-system-riscv64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qemu
+          path: dist/qemu
+          retention-days: 14
+
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init bsc-linux
+        run: |
+          git submodule update --init bsc-linux
+          git -C bsc-linux submodule update --init
+
+      - name: Buildroot deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sed make binutils gcc g++ bash patch gzip \
+            bzip2 perl tar cpio python3 unzip rsync file wget bc \
+            libncurses5-dev
+
+      - name: Cache Buildroot downloads
+        uses: actions/cache@v4
+        with:
+          path: bsc-linux/buildroot/dl
+          key: br2-dl-${{ hashFiles('bsc-linux/bsc_tree/**') }}
+          restore-keys: br2-dl-
+
+      - name: Build kernel + initramfs
+        run: make -j$(nproc) build-bsc-linux
+
+      - name: Pack linux images
+        run: |
+          mkdir -p dist/linux
+          cp bsc-linux/buildroot/output/images/Image dist/linux/
+          cp bsc-linux/buildroot/output/images/rootfs.cpio dist/linux/
+          nm bsc-linux/buildroot/output/build/linux-*/vmlinux | grep ' do_trap_break$' | cut -d' ' -f1 | sed 's/^/0x/' > dist/linux/bp.txt
+          test -s dist/linux/bp.txt
+          cat dist/linux/bp.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/linux
+          retention-days: 14
+
+  capture:
+    runs-on: ubuntu-24.04
+    needs: [toolchain, qemu, linux]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-riscv64-linux-gnu gdb-multiarch python3
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: qemu
+          path: dist/qemu
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux
+          path: dist/linux
+
+      - name: Stub + convert
+        run: make -j$(nproc) CROSS_COMPILE=riscv64-linux-gnu- build-stub build-convert
+
+      - name: Capture
+        run: |
+          chmod +x dist/qemu/qemu-system-riscv64
+          BP=$(cat dist/linux/bp.txt)
+          python3 scripts/extract.py \
+            --qemu "$PWD/dist/qemu/qemu-system-riscv64" \
+            --bios "$PWD/dist/qemu/bios.bin" \
+            --kernel dist/linux/Image \
+            --initrd dist/linux/rootfs.cpio \
+            --stub build/restore_stub.bin \
+            --smp 1 \
+            --bp "$BP" \
+            --append "console=hvc0 earlycon=sbi" \
+            --tool-gdb gdb-multiarch \
+            -o build/
+          ./build/convert -o build/mem.image 0x80000000:build/checkpoint_combined.bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mem.image
+          path: build/mem.image
+          retention-days: 30
