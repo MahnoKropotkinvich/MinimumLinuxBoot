@@ -2,9 +2,6 @@
 	path = qemu
 	url = https://github.com/MahnoKropotkinvich/qemu
 	branch = openpiton
-[submodule "opensbi"]
-	path = opensbi
-	url = https://github.com/riscv-software-src/opensbi
 [submodule "linux"]
 	path = linux
 	url = https://github.com/MahnoKropotkinvich/linux.git

@@ -13,7 +13,6 @@ GSoC 2026 Project [Generic MinimumLinuxBoot for RTL Simulations](https://summero
 |gdb(riscv cross)|17.1|
 |gcc(riscv cross)|16.1.0 |
 |verilator|5.046|
-|OpenSBI|1.6|
 |Linux|7.1 (Kconfig modified, included as submodule)|
 |QEMU|v11.0.0-1190-g8862536224 (modified, included as submodule)|
 |OpenPiton|git+1c6bfd2(cloned from Github)|
@@ -21,7 +20,7 @@ GSoC 2026 Project [Generic MinimumLinuxBoot for RTL Simulations](https://summero
 ## Components
 - a forked version of **QEMU**, providing `OpenPiton` RISC-V machine type to match exactly real hardware's peripheral addresses
 - **Linux kernel**, no changes to source code but configurations, it currently **only** supports initramfs and uart interaction.
-- **OpenSBI**, submodule from upstream, no changes
+- **OpenSBI**, QEMU bundled opensbi-riscv64-generic-fw_dynamic.bin (no submodule)
 - **Python scripts**, for state capture & image schema conversion 
 - **M-mode stub**, to restore all saved states in memory image
 - **ebreak trigger**, serving as the checkpoint for gdb to capture memory state 

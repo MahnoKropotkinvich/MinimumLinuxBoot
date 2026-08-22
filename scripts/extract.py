@@ -187,7 +187,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--smp", type=int, default=1,
                    help="Number of harts to boot and capture (default 1). "
                         "Must match the RTL tile count.")
-    p.add_argument("--bios", help="Path to OpenSBI fw_jump.bin")
+    p.add_argument("--bios", help="Optional firmware; omit to use QEMU bundled OpenSBI")
     p.add_argument("--kernel", required=True, help="Path to kernel/payload binary")
     p.add_argument("--initrd", help="Path to initramfs cpio(.gz)")
     p.add_argument("--append", help="Kernel command line")

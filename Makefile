@@ -10,7 +10,6 @@ HOST_CC      ?= cc
 
 QEMU_DIR     = $(CURDIR)/qemu
 LINUX_DIR    = $(CURDIR)/linux
-OPENSBI_DIR  = $(CURDIR)/opensbi
 
 STUB_DIR     = $(CURDIR)/stub
 TRIGGER_DIR  = $(CURDIR)/trigger
@@ -18,11 +17,9 @@ ROOTFS_OVERLAY = $(CURDIR)/rootfs-overlay
 SCRIPTS_DIR  = $(CURDIR)/scripts
 
 LINUX_BUILD  = $(TARGET)/linux
-OPENSBI_BUILD = $(TARGET)/opensbi
 QEMU_BUILD   = $(TARGET)/qemu
 
 QEMU_BIN     = $(QEMU_BUILD)/qemu-system-riscv64
-BIOS         = $(OPENSBI_BUILD)/platform/generic/firmware/fw_jump.bin
 LINUX_IMAGE  = $(LINUX_BUILD)/arch/riscv/boot/Image
 
 STUB_BIN     = $(TARGET)/restore_stub.bin
@@ -38,7 +35,7 @@ ALPINE_DIR   = $(TARGET)/alpine-rootfs
 CHECKPOINT   = $(TARGET)/checkpoint_combined.bin
 MEM_IMAGE    = $(TARGET)/mem.image
 
-.PHONY: all build build-linux build-opensbi build-qemu build-stub build-convert build-trigger build-rootfs capture clean
+.PHONY: all build build-linux build-qemu build-stub build-convert build-trigger build-rootfs capture clean
 
 all: build
 
@@ -48,15 +45,10 @@ $(LINUX_IMAGE):
 	$(MAKE) -C $(LINUX_DIR) ARCH=riscv CROSS_COMPILE=$(CROSS_COMPILE) O=$(LINUX_BUILD) minimumlinuxboot_defconfig
 	$(MAKE) -C $(LINUX_DIR) ARCH=riscv CROSS_COMPILE=$(CROSS_COMPILE) O=$(LINUX_BUILD)
 
-# ---- OpenSBI ----
-$(BIOS):
-	$(MAKE) -C $(OPENSBI_DIR) PLATFORM=generic \
-		CROSS_COMPILE=$(CROSS_COMPILE) \
-		FW_TEXT_START=0 \
-		FW_JUMP_ADDR=0x80200000 \
-		O=$(OPENSBI_BUILD)
-
 # ---- QEMU ----
+# Firmware is QEMU bundled OpenSBI (opensbi-riscv64-generic-fw_dynamic.bin).
+# extract.py omits -bios so QEMU loads that default.
+
 $(QEMU_BIN):
 	mkdir -p $(QEMU_BUILD)
 	cd $(QEMU_BUILD) && $(QEMU_DIR)/configure --target-list=riscv64-softmmu
@@ -88,7 +80,6 @@ $(TARGET)/initramfs.cpio.gz: $(ALPINE_DIR)/.stamp $(TRIGGER_BIN) $(ROOTFS_OVERLA
 
 # ---- Phony build targets ----
 build-linux:     $(LINUX_IMAGE)
-build-opensbi:   $(BIOS)
 build-qemu:      $(QEMU_BIN)
 build-stub:      $(STUB_BIN)
 build-convert:   $(CONVERT_BIN)
@@ -96,21 +87,17 @@ build-trigger:   $(TRIGGER_BIN)
 build-rootfs:    $(filter $(TARGET)/initramfs.cpio.gz,$(INITRD))
 
 # ---- Aggregate ----
-build: build-linux build-opensbi build-qemu build-stub build-convert build-trigger build-rootfs
+build: build-linux build-qemu build-stub build-convert build-trigger build-rootfs
 
 # ---- Capture checkpoint + generate mem.image ----
 capture: build
 	python3 $(SCRIPTS_DIR)/extract.py \
 		--qemu $(QEMU_BIN) \
-		--bios $(BIOS) \
 		--kernel $(LINUX_IMAGE) \
 		--initrd $(INITRD) \
 		--stub $(STUB_BIN) \
 		--append "console=hvc0 quiet" \
-		--elf $(LINUX_BUILD)/vmlinux \
 		--tool-gdb $(GDB) \
-		--tool-nm $(NM) \
-		--gdb-socket $(TARGET)/gdb.sock \
 		-o $(TARGET)/
 	$(CONVERT_BIN) -o $(MEM_IMAGE) 0x80000000:$(CHECKPOINT)
 
