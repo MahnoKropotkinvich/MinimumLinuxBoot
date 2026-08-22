@@ -2,7 +2,7 @@
 	path = qemu
 	url = https://github.com/MahnoKropotkinvich/qemu
 	branch = openpiton
-[submodule "linux"]
-	path = linux
-	url = https://github.com/MahnoKropotkinvich/linux.git
-	branch = openpiton
+[submodule "bsc-linux"]
+	path = bsc-linux
+	url = https://github.com/MahnoKropotkinvich/bsc-linux.git
+	branch = mlb

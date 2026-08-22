@@ -4,10 +4,10 @@
 Usage:
     python3 scripts/extract.py \
         --qemu qemu/build/qemu-system-riscv64 \
-        --kernel linux/arch/riscv/boot/Image \
-        --initrd build/initramfs.cpio.gz \
+        --kernel bsc-linux/buildroot/output/images/Image \
+        --initrd bsc-linux/buildroot/output/images/rootfs.cpio \
         --stub build/restore_stub.bin \
-        --smp 15 --bp 0xffffffff80003cbc \
+        --smp 1 --bp 0xffffffff80003cbc \
         -o build/
 """
 
@@ -42,13 +42,6 @@ GDB_TIMEOUT = 600
 # and the kernel resumes handling the ebreak.
 DO_TRAP_BREAK = 0xFFFFFFFF80003CBC
 
-# ---------------------------------------------------------------------------
-# Per-hart state
-#
-# Field names double as the GDB register name. Adding a register means adding
-# a field plus its offset in SCALAR_OFF / ARRAYS.
-# ---------------------------------------------------------------------------
-
 
 @dataclass
 class HartState:
@@ -66,8 +59,6 @@ class HartState:
     mcounteren: int = 0
     mie: int = 0
 
-    # sepc/scause/stval matter when the capture lands inside an S-mode trap
-    # handler: without them the hart resumes reading scause/stval as 0.
     satp: int = 0
     stvec: int = 0
     sscratch: int = 0
@@ -110,12 +101,6 @@ class ClintState:
         return bytes(out)
 
 
-# ---------------------------------------------------------------------------
-# Blob layout - contract with restore_stub.S
-#
-# Every offset has a matching `.equ RB_*` in the stub. BLOB_SIZE must stay
-# <= BLOB_STRIDE, which the stub encodes as `slli t5, mhartid, 10`.
-# ---------------------------------------------------------------------------
 
 SCALAR_OFF: dict[str, int] = {
     "pc": 248,
@@ -128,14 +113,6 @@ SCALAR_OFF: dict[str, int] = {
 }
 
 # field -> (blob offset, first register index, count, gdb expression).
-# PITON_ARIANE sets RVF = RVD = IS_XLEN64 = 1 (ariane_pkg.sv:162), FLEN=64.
-# Linux swaps FP state lazily, so live FPRs with mstatus.FS==Off are normal.
-#
-# An FPR reads back as `union riscv_double`; `p/x $fN` prints both members
-# and nothing scalar, so the .double member is what yields the raw 64 bits.
-#
-# OpenPiton's NrPMPEntries is 16 (tile.v.pyv). OpenSBI needs 15 live entries
-# once NAPOT alignment splits them, so all 16 are captured.
 ARRAYS: dict[str, tuple[int, int, int, str]] = {
     "gprs":     (0,   1, 31, "$x{}"),
     "pmpaddrs": (360, 0, 16, "$pmpaddr{}"),
@@ -187,7 +164,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--smp", type=int, default=1,
                    help="Number of harts to boot and capture (default 1). "
                         "Must match the RTL tile count.")
-    p.add_argument("--bios", help="Optional firmware; omit to use QEMU bundled OpenSBI")
+    p.add_argument("--bios", help="Optional firmware; omit to use QEMU default")
     p.add_argument("--kernel", required=True, help="Path to kernel/payload binary")
     p.add_argument("--initrd", help="Path to initramfs cpio(.gz)")
     p.add_argument("--append", help="Kernel command line")
@@ -217,7 +194,7 @@ def run_qemu(args: argparse.Namespace, socket: Path) -> subprocess.Popen:
         # must not take the csrw stimecmp path.
         "-cpu", ("rv64,h=false,sstc=false,zicntr=false,zihpm=false"
                  ",sv57=false,sv48=false"
-                 f",num-pmp-regions={ARRAYS['pmpaddrs'][2]}"),
+                ),
         "-m", "256M", "-nographic",
         "-smp", str(args.smp),
         "-kernel", args.kernel,
@@ -311,14 +288,6 @@ def run_gdb(args: argparse.Namespace, socket: Path,
 
 def pack_image(stub: Path, hart_blobs: list[bytes], ram: Path, out: Path,
                clint_blob: bytes) -> None:
-    """Overlay stub + CLINT blob + per-hart blobs onto the RAM dump.
-
-    Memory layout at 0x80000000:
-        0x0000                    : restore_stub (entry point, all harts)
-        0x0C00                    : captured CLINT blob (__clint_blob)
-        0x1000 + hart*STRIDE      : that hart's register blob (__reg_blob)
-        rest                      : original RAM content
-    """
     data = bytearray(ram.read_bytes())
 
     st = stub.read_bytes()
