@@ -1,3 +1,16 @@
+/* ---- CLINT MMIO (matches riscv_peripherals.sv ClintBase) ---- */
+.equ CLINT_BASE,     0xfff1020000
+.equ CLINT_MSIP,     0x0000          /* + 4*hartid */
+.equ CLINT_MTIMECMP, 0x4000          /* + 8*hartid */
+.equ CLINT_MTIME,    0xbff8
+
+/* ---- captured CLINT blob, placed at 0x80000C00 ----
+ * Layout: mtime 8B, msip[16] 4B each, mtimecmp[16] 8B each.
+ */
+.equ CS_MTIME,       0
+.equ CS_MSIP,        8
+.equ CS_MTIMECMP,    72              /* 8 (mtime) + 64 (msip[16]) */
+
 .option norvc
 .section .text
 .globl _start
@@ -6,6 +19,40 @@ _start:
     .option norelax
     lla t6, __reg_blob
     .option pop
+
+    /* Each hart restores its own blob: t6 += mhartid * BLOB_STRIDE (0x400). */
+    csrr t5, mhartid
+    slli t5, t5, 10
+    add  t6, t6, t5
+
+    /* ---- restore CLINT (msip + mtimecmp per hart, mtime once) ---- */
+    li   t0, CLINT_BASE
+    lla  t1, __clint_blob
+    csrr t2, mhartid
+
+    /* msip[hartid] */
+    slli t3, t2, 2                      /* hartid * 4 */
+    add  t4, t1, t3
+    lwu  t4, CS_MSIP(t4)
+    add  t3, t0, t3                     /* CLINT_BASE + 4*hartid */
+    sw   t4, 0(t3)
+
+    /* mtimecmp[hartid] */
+    slli t3, t2, 3                      /* hartid * 8 */
+    add  t4, t1, t3
+    ld   t4, CS_MTIMECMP(t4)
+    add  t3, t0, t3                     /* CLINT_BASE + 8*hartid */
+    li   t5, CLINT_MTIMECMP
+    add  t3, t3, t5                     /* offset exceeds 12-bit imm */
+    sd   t4, 0(t3)
+
+    /* mtime is global: only hart 0 writes it */
+    bnez t2, 1f
+    ld   t4, CS_MTIME(t1)
+    li   t5, CLINT_MTIME
+    add  t5, t0, t5
+    sd   t4, 0(t5)
+1:
 
 /* ---- blob offsets (each 8 bytes) ---- */
 .equ RB_X1,          0
@@ -70,7 +117,16 @@ _start:
 .equ RB_PMPADDR13,   464
 .equ RB_PMPADDR14,   472
 .equ RB_PMPADDR15,   480
-.equ RB_SIZE,        488
+.equ RB_MIE,         496
+
+.equ RB_SEPC,        504
+.equ RB_SCAUSE,      512
+.equ RB_STVAL,       520
+
+.equ RB_FCSR,        528
+.equ RB_F0,          536
+
+.equ RB_SIZE,        792
 
 /* ---- restore CSRs (use t0 as scratch, t6 as blob base) ---- */
 
@@ -99,8 +155,20 @@ _start:
     ld t0, RB_SSCRATCH(t6)
     csrw sscratch, t0
 
+    ld t0, RB_SEPC(t6)
+    csrw sepc, t0
+
+    ld t0, RB_SCAUSE(t6)
+    csrw scause, t0
+
+    ld t0, RB_STVAL(t6)
+    csrw stval, t0
+
     ld t0, RB_SIE(t6)
     csrw sie, t0
+
+    ld t0, RB_MIE(t6)
+    csrw mie, t0
 
     ld t0, RB_SCOUNTEREN(t6)
     csrw scounteren, t0
@@ -147,12 +215,49 @@ _start:
     ld t0, RB_PMPADDR15(t6)
     csrw pmpaddr15, t0
 
-    /* Restore mstatus last among CSRs — force MPP=S (01) */
+    /* ---- restore floating point state ---- */
+    li t0, (3 << 13)          /* mstatus.FS = Dirty */
+    csrs mstatus, t0
+
+    ld t0, RB_FCSR(t6)
+    fscsr t0
+
+    fld f0,  RB_F0 +   0(t6)
+    fld f1,  RB_F0 +   8(t6)
+    fld f2,  RB_F0 +  16(t6)
+    fld f3,  RB_F0 +  24(t6)
+    fld f4,  RB_F0 +  32(t6)
+    fld f5,  RB_F0 +  40(t6)
+    fld f6,  RB_F0 +  48(t6)
+    fld f7,  RB_F0 +  56(t6)
+    fld f8,  RB_F0 +  64(t6)
+    fld f9,  RB_F0 +  72(t6)
+    fld f10, RB_F0 +  80(t6)
+    fld f11, RB_F0 +  88(t6)
+    fld f12, RB_F0 +  96(t6)
+    fld f13, RB_F0 + 104(t6)
+    fld f14, RB_F0 + 112(t6)
+    fld f15, RB_F0 + 120(t6)
+    fld f16, RB_F0 + 128(t6)
+    fld f17, RB_F0 + 136(t6)
+    fld f18, RB_F0 + 144(t6)
+    fld f19, RB_F0 + 152(t6)
+    fld f20, RB_F0 + 160(t6)
+    fld f21, RB_F0 + 168(t6)
+    fld f22, RB_F0 + 176(t6)
+    fld f23, RB_F0 + 184(t6)
+    fld f24, RB_F0 + 192(t6)
+    fld f25, RB_F0 + 200(t6)
+    fld f26, RB_F0 + 208(t6)
+    fld f27, RB_F0 + 216(t6)
+    fld f28, RB_F0 + 224(t6)
+    fld f29, RB_F0 + 232(t6)
+    fld f30, RB_F0 + 240(t6)
+    fld f31, RB_F0 + 248(t6)
+
+    /* mstatus last: overwrites the temporary FS = Dirty with the captured
+     * FS. MPP is already the current privilege (filled in by extract.py). */
     ld t0, RB_MSTATUS(t6)
-    li t1, ~(3 << 11)
-    and t0, t0, t1
-    li t1, (1 << 11)
-    or t0, t0, t1
     csrw mstatus, t0
 
     /* ---- restore GPRs (t6=x31 last, t0=x5 second-to-last) ---- */
@@ -190,5 +295,4 @@ _start:
     ld x5,  RB_X5(t6)
     ld x31, RB_X31(t6)
 
-    fence.i
     mret
