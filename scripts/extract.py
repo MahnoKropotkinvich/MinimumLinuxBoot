@@ -7,7 +7,7 @@ Usage:
         --kernel bsc-linux/buildroot/output/images/Image \
         --initrd bsc-linux/buildroot/output/images/rootfs.cpio \
         --stub build/restore_stub.bin \
-        --smp 1 --bp 0xffffffff80003df2 \
+        --smp 1 --bp do_trap_break \
         -o build/
 """
 
@@ -37,8 +37,7 @@ MAX_CLINT_HARTS = 16
 QEMU_STARTUP_WAIT = 2.0
 GDB_TIMEOUT = 600
 
-# Fallback only. Prefer --bp from `nm vmlinux` of the kernel being captured.
-DO_TRAP_BREAK = 0xFFFFFFFF80003DF2
+DEFAULT_BP = "do_trap_break"
 
 
 @dataclass
@@ -46,9 +45,6 @@ class HartState:
     hart: int = 0
     pc: int = 0
 
-    # mie must be restored: CVA6 resets mie_q to 0 and its wfi wake condition is
-    # |(mip_q & mie_q), so a hart parked in wfi could never be woken by an IPI,
-    # deadlocking SBI rfence/tlb_sync on SMP.
     mstatus: int = 0
     mtvec: int = 0
     mideleg: int = 0
@@ -99,7 +95,6 @@ class ClintState:
         return bytes(out)
 
 
-
 SCALAR_OFF: dict[str, int] = {
     "pc": 248,
     "mstatus": 256, "mtvec": 264, "mideleg": 272, "medeleg": 280,
@@ -110,7 +105,6 @@ SCALAR_OFF: dict[str, int] = {
     "sepc": 504, "scause": 512, "stval": 520, "fcsr": 528,
 }
 
-# field -> (blob offset, first register index, count, gdb expression).
 ARRAYS: dict[str, tuple[int, int, int, str]] = {
     "gprs":     (0,   1, 31, "$x{}"),
     "pmpaddrs": (360, 0, 16, "$pmpaddr{}"),
@@ -167,19 +161,63 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--initrd", help="Path to initramfs cpio(.gz)")
     p.add_argument("--append", help="Kernel command line")
     p.add_argument("--stub", required=True, help="Path to restore_stub.bin")
-    p.add_argument("--tool-gdb", default="gdb", help="GDB binary (default: gdb)")
-
-    p.add_argument("--bp", type=lambda x: int(x, 0), default=DO_TRAP_BREAK,
-                   help=f"Breakpoint address (default: {DO_TRAP_BREAK:#x}, "
-                        "Linux do_trap_break)")
+    p.add_argument("--bp", default=DEFAULT_BP,
+                   help="Breakpoint: hex address or symbol (default: do_trap_break). "
+                        "Symbols are resolved with nm on an ELF (the kernel if it "
+                        "is ELF, otherwise vmlinux next to it).")
     p.add_argument("--ram-size", type=lambda x: int(x, 0), default=0x10000000,
                    help="RAM dump size (default: 256M)")
     p.add_argument("--ram-base", type=lambda x: int(x, 0), default=0x80000000,
                    help="RAM base address (default: 0x80000000)")
     p.add_argument("-o", "--output-dir", default="build",
                    help="Output directory (default: build/)")
+    p.add_argument("--tool-gdb", default="gdb", help="GDB binary (default: gdb)")
+    p.add_argument("--tool-nm", default="nm", help="nm binary (default: nm)")
 
     return p.parse_args()
+
+
+def is_elf(path: Path) -> bool:
+    try:
+        with path.open("rb") as f:
+            return f.read(4) == b"\x7fELF"
+    except OSError:
+        return False
+
+
+def find_elf(kernel: Path) -> Path | None:
+    if is_elf(kernel):
+        return kernel
+    sibling = kernel.parent / "vmlinux"
+    if sibling.is_file() and is_elf(sibling):
+        return sibling
+    build = kernel.parent.parent / "build"
+    if build.is_dir():
+        for p in sorted(build.glob("linux-*/vmlinux")):
+            if is_elf(p):
+                return p
+    return None
+
+
+def resolve_bp(args: argparse.Namespace) -> int:
+    bp = args.bp
+    if not bp.isidentifier():
+        return int(bp, 0)
+    kernel = Path(args.kernel)
+    elf = find_elf(kernel)
+    if elf is None:
+        raise RuntimeError(
+            f"--bp {bp!r} is a symbol, but no ELF was found near {kernel}")
+    r = subprocess.run([args.tool_nm, str(elf)], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"nm {elf} failed: {r.stderr.strip()}")
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[-1] == bp:
+            addr = int(parts[0], 16)
+            print(f"  bp {bp} -> {addr:#x} ({elf})", file=sys.stderr)
+            return addr
+    raise RuntimeError(f"symbol {bp!r} not found in {elf}")
 
 
 def run_qemu(args: argparse.Namespace, socket: Path) -> subprocess.Popen:
@@ -191,8 +229,7 @@ def run_qemu(args: argparse.Namespace, socket: Path) -> subprocess.Popen:
         # cannot walk. sstc=false because CVA6 has no stimecmp CSR, so OpenSBI
         # must not take the csrw stimecmp path.
         "-cpu", ("rv64,h=false,sstc=false,zicntr=false,zihpm=false"
-                 ",sv57=false,sv48=false"
-                ),
+                 ",sv57=false,sv48=false"),
         "-m", "256M", "-nographic",
         "-smp", str(args.smp),
         "-kernel", args.kernel,
@@ -326,6 +363,8 @@ def main() -> int:
     stub_path = Path(args.stub)
     if not stub_path.exists():
         raise RuntimeError(f"Stub not found: {stub_path}")
+
+    args.bp = resolve_bp(args)
 
     qemu = run_qemu(args, socket)
     try:

@@ -96,15 +96,19 @@ jobs:
           mkdir -p dist/linux
           cp bsc-linux/buildroot/output/images/Image dist/linux/
           cp bsc-linux/buildroot/output/images/rootfs.cpio dist/linux/
-          nm bsc-linux/buildroot/output/build/linux-*/vmlinux | grep ' do_trap_break$' | cut -d' ' -f1 | sed 's/^/0x/' > dist/linux/bp.txt
-          test -s dist/linux/bp.txt
-          cat dist/linux/bp.txt
+          cp bsc-linux/buildroot/output/build/linux-*/vmlinux dist/linux/vmlinux
 
       - uses: actions/upload-artifact@v4
         with:
           name: linux
           path: dist/linux
           retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vmlinux
+          path: dist/linux/vmlinux
+          retention-days: 30
 
   capture:
     runs-on: ubuntu-24.04
@@ -134,7 +138,6 @@ jobs:
       - name: Capture
         run: |
           chmod +x dist/qemu/qemu-system-riscv64
-          BP=$(cat dist/linux/bp.txt)
           python3 scripts/extract.py \
             --qemu "$PWD/dist/qemu/qemu-system-riscv64" \
             --bios "$PWD/dist/qemu/bios.bin" \
@@ -142,9 +145,10 @@ jobs:
             --initrd dist/linux/rootfs.cpio \
             --stub build/restore_stub.bin \
             --smp 1 \
-            --bp "$BP" \
+            --bp do_trap_break \
             --append "console=hvc0 earlycon=sbi" \
             --tool-gdb gdb-multiarch \
+            --tool-nm nm \
             -o build/
           ./build/convert -o build/mem.image 0x80000000:build/checkpoint_combined.bin
 

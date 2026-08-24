@@ -5,6 +5,7 @@ CROSS_COMPILE = $(PREFIX)/bin/riscv64-unknown-linux-gnu-
 CC            = $(CROSS_COMPILE)gcc
 OBJCOPY       = $(CROSS_COMPILE)objcopy
 GDB          ?= $(CROSS_COMPILE)gdb
+NM           ?= $(CROSS_COMPILE)nm
 HOST_CC      ?= cc
 
 QEMU_DIR     = $(CURDIR)/qemu
@@ -25,7 +26,7 @@ CONVERT_BIN  = $(TARGET)/convert
 CHECKPOINT   = $(TARGET)/checkpoint_combined.bin
 MEM_IMAGE    = $(TARGET)/mem.image
 
-.PHONY: all build build-qemu build-stub build-convert build-bsc-linux capture clean
+.PHONY: all build build-qemu build-stub build-convert build-bsc-linux capture clean distclean
 
 all: build
 
@@ -44,10 +45,9 @@ $(CONVERT_BIN): $(SCRIPTS_DIR)/convert.c
 	$(HOST_CC) -O2 -Wall -Wextra -std=c11 -o $@ $<
 
 build-bsc-linux:
-	git -C $(BSC_LINUX) submodule update --init
-	$(MAKE) -C $(BSC_LINUX)/buildroot BR2_EXTERNAL=$(BSC_LINUX)/bsc_tree sargantana_alveo_defconfig
-	$(MAKE) -C $(BSC_LINUX)/buildroot
-	$(MAKE) -C $(BSC_LINUX)/buildroot linux-rebuild-with-initramfs
+	$(MAKE) -C $(BSC_LINUX)/buildroot BR2_EXTERNAL=$(BSC_LINUX)/bsc_tree HOST_CFLAGS="-O2 -std=gnu17" sargantana_alveo_defconfig
+	$(MAKE) -C $(BSC_LINUX)/buildroot BR2_EXTERNAL=$(BSC_LINUX)/bsc_tree HOST_CFLAGS="-O2 -std=gnu17"
+	$(MAKE) -C $(BSC_LINUX)/buildroot BR2_EXTERNAL=$(BSC_LINUX)/bsc_tree HOST_CFLAGS="-O2 -std=gnu17" linux-rebuild-with-initramfs
 
 build-qemu:      $(QEMU_BIN)
 build-stub:      $(STUB_BIN)
@@ -62,10 +62,16 @@ capture: build
 		--initrd $(INITRD) \
 		--stub $(STUB_BIN) \
 		--smp $(SMP) \
+		--bp do_trap_break \
 		--append "console=hvc0 earlycon=sbi" \
 		--tool-gdb $(GDB) \
+		--tool-nm $(NM) \
 		-o $(TARGET)/
 	$(CONVERT_BIN) -o $(MEM_IMAGE) 0x80000000:$(CHECKPOINT)
 
 clean:
-	rm -rf $(TARGET)/*
+	rm -rf $(TARGET)
+	-$(MAKE) -C $(BSC_LINUX)/buildroot clean
+
+distclean: clean
+	-$(MAKE) -C $(BSC_LINUX)/buildroot distclean
